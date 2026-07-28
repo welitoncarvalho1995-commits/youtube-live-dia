@@ -29,11 +29,11 @@ _cache = {}
 
 
 def resolver(video_id):
-    """Devolve o link m3u8 atual do YouTube para o video_id dado."""
+    """Devolve (url, erro). Se der certo, erro e None. Se falhar, url e None."""
     agora = time.time()
     url, expira_em = _cache.get(video_id, (None, 0))
     if url and agora < expira_em:
-        return url  # ainda valido, reutiliza
+        return url, None  # ainda valido, reutiliza
 
     cmd = ["yt-dlp", "-g", "-f", "best[protocol*=m3u8]/best"]
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
@@ -43,15 +43,17 @@ def resolver(video_id):
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
     except subprocess.TimeoutExpired:
-        return None
+        return None, "Tempo esgotado ao consultar o YouTube (timeout de 90s)."
 
     linhas = out.stdout.strip().splitlines()
     if not linhas:
-        return None
+        # Nao veio nenhum link: devolve o motivo que o yt-dlp deu.
+        erro = out.stderr.strip() or "yt-dlp nao retornou nenhum link (sem detalhe)."
+        return None, erro
 
     resolvida = linhas[-1].strip()
     _cache[video_id] = (resolvida, agora + CACHE_TTL)
-    return resolvida
+    return resolvida, None
 
 
 @app.route("/")
@@ -63,9 +65,11 @@ def home():
 @app.route("/live")
 def live():
     video_id = request.args.get("id", DEFAULT_ID)
-    url = resolver(video_id)
+    url, erro = resolver(video_id)
     if not url:
-        return Response("Nao consegui resolver o stream", status=502)
+        # Mostra o motivo exato do erro na tela, para diagnostico.
+        return Response("Nao consegui resolver o stream.\n\nMOTIVO:\n" + str(erro),
+                        status=502, mimetype="text/plain")
     return redirect(url, code=302)
 
 
